@@ -1,0 +1,119 @@
+---
+title: "r_knn"
+author: "olga"
+date: "February 7, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Algorithm and Data
+KNN nearest neighbors in R
+
+Data Prostate_Cancer.csv
+
+
+
+
+```{r reading file}
+## set working directory
+setwd("C:/Users/dave_/Documents/olga_data_science_machine_learning")
+##read file, converting every character vector to a factor
+prc <- read.csv("Prostate_Cancer.csv",stringsAsFactors = FALSE)
+#quick check to see a structure
+str(prc)
+```
+
+
+```{r quick checks}
+#remove first variable(id) from dataset
+prc <- prc[-1]
+head(prc)
+```
+
+```{r counting B-Benigh, M-Malignant}
+table(prc$diagnosis_result)  # it helps us to get the numbers of patients
+```
+```{r}
+##creating new column with renaming B to Benign, M to Malignant
+prc$diagnosis <- factor(prc$diagnosis_result, levels = c("B", "M"), labels = c("Benign", "Malignant"))
+```
+
+
+```{r}
+round(prop.table(table(prc$diagnosis)) * 100, digits = 1)  # it gives the result in the percentage form rounded of to 1 decimal place( and so it’s digits = 1)
+```
+```{r prepocessing of data - normalizing}
+#normalize - transform all values to common scale
+
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x))) }
+
+#normalizing all variables instead of doing it 8 times for each variable
+prc_n <- as.data.frame(lapply(prc[2:9], normalize))
+
+
+#quick check how normalization worked
+summary(prc_n$radius)
+```
+
+```{r splitting data to training and test 70% and 30%}
+prc_train <- prc_n[1:70,]
+prc_test <- prc_n[71:100,]
+
+```
+
+
+```{r}
+prc_train_labels <- prc[1:70, 1]
+prc_test_labels <- prc[71:100, 1]   #This code takes the diagnosis factor in column 1 of the prc data frame and on turn creates prc_train_labels and prc_test_labels data frame.
+```
+
+<b> Training a model on data </b>
+
+The knn () function needs to be used to train a model for which we need to install a package ‘class’. The knn() function identifies the k-nearest neighbors using Euclidean distance where k is a user-specified number.
+
+```{r}
+install.packages("class", dependencies = TRUE)
+library(class)
+```
+
+No, I can use knn() function to classify test data.
+K is choosen and a sqrt of the number of observations
+
+
+```{r}
+prc_test_pred <- knn(train = prc_train, test = prc_test,cl = prc_train_labels, k=10)
+```
+
+<b>Evaluation of the model</b>
+To check the accuracy of the predicted values need to use function CrossTable()
+that is part of package 'gmodels'
+
+```{r}
+install.packages("gmodels")
+library(gmodels)
+
+CrossTable(x=prc_test_labels, y=prc_test_pred, prop.chisq=FALSE)
+
+```
+We have  30 observations in a table. 
+8 cases were accurately predicted.
+True negatives as B constitutes 26.7%
+15 out of 35 were accuratelu predicted (True Positives) as M, which constitutes as 50%
+There were no cases of False Negatives
+There were 7 cases as False positives
+
+Total accuracy of the model (True positive+True negative)/30 =  (8+15)/30= 0.77=77%
+
+
+
+<b>Improving performance of the model </b>
+
+This can be taken into account by repeating the steps 3 and 4 and by changing the k-value. Generally, it is the square root of the observations and in this case we took k=10 which is a perfect square root of 100.The k-value may be fluctuated in and around the value of 10 to check the increased accuracy of the model. Do try it out with values of your choice to increase the accuracy! Also remember, to keep the value of FN’s as low as possible.
+
+
+
+
