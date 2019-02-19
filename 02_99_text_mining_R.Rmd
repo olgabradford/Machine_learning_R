@@ -1,0 +1,320 @@
+---
+title: "text_mining_R"
+author: "olga"
+date: "February 18, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#loading tm - text mining library
+library(tm)
+```
+
+Creating a collection of documents (technically referred to as Corpus) in the R environment.This basically involves loading the files created in the TextMining folder into a Corpus object.
+
+```{r}
+#create corpus
+docs <- Corpus(DirSource("C:/Users/dave_/Documents/olga_data_science_machine_learning/text_mining_R"))
+```
+
+```{r}
+#quick check
+docs
+```
+```{r}
+#inspect a document number 15, dont run, too long, all good with check
+#writeLines(as.character(docs[[15]]))
+```
+
+
+
+Pre-processing
+
+Data cleansing, though tedious, is perhaps the most important step in text analysis.   As we will see, dirty data can play havoc with the results.  Furthermore, as we will also see, data cleaning is invariably an iterative process as there are always problems that are overlooked the first time around.
+
+The tm package offers a number of transformations that ease the tedium of cleaning data. To see the available transformations  type getTransformations() at the R prompt:
+
+```{r}
+getTransformations()
+```
+A few edits are needed before Transformations
+ In this case, the input function would be one that replaces all instances of a character by spaces. As it turns out the gsub() function does just that.
+ 
+```{r}
+#create the toSpace content transformer
+toSpace <- content_transformer(function(x, pattern) {return (gsub(pattern, ' ', x))})
+```
+ Now, apply toSpace function to docs
+```{r}
+docs <- tm_map(docs, toSpace, '-')
+docs <- tm_map(docs, toSpace, ':')
+```
+ 
+ #check after each transformation
+ 
+```{r}
+#dont run, all good
+#writeLines(as.character(docs[[15]]))
+```
+Now I can remove punctuation
+```{r}
+#Remove punctuation – replace punctuation marks with ” “
+docs <- tm_map(docs, removePunctuation)
+```
+
+check again
+```{r}
+#writeLines(as.character(docs[[15]]))
+```
+Ok, quick check shows that there is still some left, remove them
+
+```{r}
+docs <- tm_map(docs, toSpace, ' -')
+```
+
+Next step is convert the corpus to lower case and remove all numbers(not always the case)
+
+```{r}
+#convertion to lower case
+docs <- tm_map(docs,content_transformer(tolower))
+
+#Strip digits (std transformation, so no need for content_transformer)
+docs <- tm_map(docs, removeNumbers)
+```
+
+The next step is to remove common words  from the text. These  include words such as articles (a, an, the), conjunctions (and, or but etc.), common verbs (is), qualifiers (yet, however etc) . The tm package includes  a standard list of such stop words as they are referred to. We remove stop words using the standard removeWords transformation like so:
+
+```{r}
+#remove stopwords using the standard list in tm
+docs <- tm_map(docs, removeWords, stopwords('english'))
+```
+
+Finally, we remove all extraneous whitespaces using the stripWhitespace transformation:
+
+```{r}
+#Strip whitespace (cosmetic?)
+docs <- tm_map(docs, stripWhitespace)
+```
+
+Final check
+```{r}
+writeLines(as.character(docs[[15]]))
+```
+All good!
+
+
+Stemming:
+
+Typically a large corpus will contain  many words that have a common root – for example: offer, offered and offering.  Stemming is the process of reducing such related words to their common root, which in this case would be the word offer.
+
+```{r}
+#writeLines(as.character(docs[[30]]))
+```
+
+Now let’s stem the corpus and reinspect it.
+
+```{r}
+#load library
+library(SnowballC)
+#Stem document
+docs <- tm_map(docs,stemDocument)
+#writeLines(as.character(docs[[30]]))
+```
+
+On another important note, the output of the corpus also shows up a problem or two. First, organiz and organis are actually variants of the same stem organ. Clearly, they should be merged. Second, the word andgovern should be separated out into and and govern (this is an error in the original text).  These (and other errors of their ilk) can and should be fixed up before proceeding.  This is easily done using gsub() wrapped in content_transformer. Here is the code to  clean up these and a few other issues  that I found:
+
+```{r}
+ocs <- tm_map(docs, content_transformer(gsub), pattern = 'organiz', replacement = 'organ')
+docs <- tm_map(docs, content_transformer(gsub), pattern = 'organis', replacement = 'organ')
+docs <- tm_map(docs, content_transformer(gsub), pattern = 'andgovern', replacement = 'govern')
+docs <- tm_map(docs, content_transformer(gsub), pattern = 'inenterpris', replacement = 'enterpris')
+docs <- tm_map(docs, content_transformer(gsub), pattern = 'team-', replacement = 'team')
+```
+
+The document term matrix
+
+The next step in the process is the creation of the document term matrix  (DTM)– a matrix that lists all occurrences of words in the corpus, by document. In the DTM, the documents are represented by rows and the terms (or words) by columns.  If a word occurs in a particular document, then the matrix entry for corresponding to that row and column is 1, else it is 0 (multiple occurrences within a document are recorded – that is, if a word occurs twice in a document, it is recorded as “2” in the relevant matrix entry).
+
+A simple example might serve to explain the structure of the TDM more clearly. Assume we have a simple corpus consisting of two documents, Doc1 and Doc2, with the following content:
+
+Doc1: bananas are yellow
+
+Doc2: bananas are good
+
+Clearly there is nothing special about rows and columns – we could just as easily transpose them. If we did so, we’d get a term document matrix (TDM) in which the terms are rows and documents columns. One can work with either a DTM or TDM. I’ll use the DTM in what follows.
+
+There are a couple of general points worth making before we proceed. Firstly, DTMs (or TDMs) can be huge – the dimension of the matrix would be number of document  x the number of words in the corpus.  Secondly, it is clear that the large majority of words will appear only in a few documents. As a result a DTM is invariably sparse – that is, a large number of its entries are 0.
+
+The business of creating a DTM (or TDM) in R is as simple as:
+
+```{r}
+dtm <- DocumentTermMatrix(docs)
+```
+
+
+This creates a term document matrix from the corpus and stores the result in the variable dtm. One can get summary information on the matrix by typing the variable name in the console and hitting return:
+
+```{r}
+dtm
+```
+
+This is a 30 x 4209 dimension matrix in which 88% of the rows are zero.
+
+One can inspect the DTM, and you might want to do so for fun. However, it isn’t particularly illuminating because of the sheer volume of information that will flash up on the console. To limit the information displayed, one can inspect a small section of it like so:
+
+
+```{r}
+inspect(dtm[1:2,1000:1005])
+```
+
+This command displays terms 1000 through 1005 in the first two rows of the DTM. Note that your results may differ.
+
+
+
+
+Mining the corpus
+
+
+Notice that in constructing the TDM, we have converted a corpus of text into a mathematical object that can be analysed using quantitative techniques of matrix algebra.  It should be no surprise, therefore, that the TDM (or DTM) is the starting point for quantitative text analysis.
+
+For example, to get the frequency of occurrence of each word in the corpus, we simply sum over all rows to give column sums:
+
+```{r}
+freq <- colSums(as.matrix(dtm))
+#freq
+```
+
+Here we have  first converted the TDM into a mathematical matrix using the as.matrix() function. We have then summed over all rows to give us the totals for each column (term). The result is stored in the (column matrix) variable freq.
+
+Check that the dimension of freq equals the number of terms:
+
+
+```{r}
+#length of freq - total number of terms
+
+length(freq)
+```
+
+Now, will sort freq in descending order of term count
+
+```{r}
+ord <- order(freq,decreasing = TRUE)
+```
+
+Check the most and least frequently occurring terms:
+```{r}
+#inspect most frequent occurring terms
+freq[head(ord)]
+```
+```{r}
+#inspect least frequent occurring terms
+freq[tail(ord)]
+```
+
+The  least frequent terms can be more interesting than one might think. This is  because terms that occur rarely are likely to be more descriptive of specific documents. Indeed, I can recall the posts in which I have referred to Yorkshire, Zeno’s Paradox and  Mr. Lou Zulli without having to go back to the corpus, but I’d have a hard time enumerating the posts in which I’ve used the word system.
+
+Words like “can” and “one”  give us no information about the subject matter of the documents in which they occur. They can therefore be eliminated without loss. Indeed, they ought to have been eliminated by the stopword removal we did earlier. However, since such words occur very frequently – virtually in all documents – we can remove them by enforcing bounds when creating the DTM, like so:
+
+```{r}
+dtmr <-DocumentTermMatrix(docs, control=list(wordLengths=c(4, 20),
+bounds = list(global = c(3,27))))
+```
+
+Here we have told R to include only those words that occur in  3 to 27 documents. We have also enforced  lower and upper limit to length of the words included (between 4 and 20 characters).
+
+Inspecting the new DTM:
+```{r}
+dtmr
+```
+
+Dimension is reduced to 30 X 1295
+
+Lets check frequencies of words across documents and sort as before:
+
+
+```{r}
+freqr <- colSums(as.matrix(dtmr))
+#length should be total number of terms
+length(freqr)
+#create sort order (asc)
+ordr <- order(freqr,decreasing=TRUE)
+#inspect most frequently occurring terms
+freqr[head(ordr)]
+```
+
+```{r}
+freqr[tail(ordr)]
+```
+
+The results make sense: the top 6 keywords are pretty good descriptors of what my blogs is about – projects, management and systems. However, not all high frequency words need be significant. What they do, is give you an idea of potential classification terms.
+
+That done, let’s take get a list of terms that occur at least a  100 times in the entire corpus. This is easily done using the findFreqTerms() function as follows:
+
+```{r}
+findFreqTerms(dtmr,lowfreq=80)
+```
+
+Here I have asked findFreqTerms() to return all terms that occur more than 80 times in the entire corpus. Note, however, that the result is ordered alphabetically, not by frequency.
+
+Now that we have the most frequently occurring terms in hand, we can check for correlations between some of these and other terms that occur in the corpus.  In this context, correlation is a quantitative measure of the co-occurrence of words in multiple documents.
+
+The tm package provides the findAssocs() function to do this.  One needs to specify the DTM, the term of interest and the correlation limit. The latter is a number between 0 and 1 that serves as a lower bound for  the strength of correlation between the  search and result terms. For example, if the correlation limit is 1, findAssocs() will return only  those words that always co-occur with the search term. A correlation limit of 0.5 will return terms that have a search term co-occurrence of at least  50% and so on.
+
+Here are the results of  running findAssocs() on some of the frequently occurring terms (system, project, organis) at a correlation of 60%.
+
+```{r}
+findAssocs(dtmr,'project',0.6)
+```
+
+```{r}
+findAssocs(dtmr,'enterpris',0.6)
+```
+
+```{r}
+findAssocs(dtmr,'system',0.6)
+```
+
+An important point to note that the presence of a term in these list is not indicative of its frequency.  Rather it is a measure of the frequency with which the two (search and result term)  co-occur (or show up together) in documents across . Note also, that it is not an indicator of nearness or contiguity. Indeed, it cannot be because the document term matrix does not store any information on proximity of terms, it is simply a “bag of words.”
+
+As it turned out,  the very basic techniques listed above were enough for me to get a handle on the original problem that led me to text mining – the analysis of free text problem descriptions in my organisation’s service management tool.  What I did was to work my way through the top 50 terms and find their associations. These revealed a number of sets of keywords that occurred in multiple problem descriptions,  which was good enough for me to define some useful sub-categories.  These are currently being reviewed by the service management team. While they’re busy with that that, I’m looking into refining these further using techniques such as  cluster analysis and tokenization.   A simple case of the latter would be to look at two-word combinations in the text (technically referred to as bigrams). As one might imagine, the dimensionality of the DTM will quickly get out of hand as one considers larger multi-word combinations.
+
+
+Basic graphics.
+
+
+One of the really cool things about R is its graphing capability. I’ll do just a couple of simple examples to give you a flavour of its power and cool factor. There are lots of nice examples on the Web that you can try out for yourself.
+
+Let’s first do a simple frequency histogram. I’ll use the ggplot2 package, written by Hadley Wickham to do this. Here’s the code:
+
+```{r}
+wf=data.frame(term=names(freqr),occurrences=freqr)
+library(ggplot2)
+p <- ggplot(subset(wf, freqr>100), aes(term, occurrences))
+p <- p + geom_bar(stat='identity')
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))
+p <- p + ggtitle('Term-occurance histogram (freq>100)')
+p
+```
+
+Finally, let’s create a wordcloud for no other reason than everyone who can seems to be doing it.  The code for this is:
+
+```{r}
+#wordcloud
+library(wordcloud)
+#setting the same seed each time ensures consistent look across clouds
+set.seed(42)
+#limit words by specifying min frequency
+wordcloud(names(freqr),freqr, min.freq=70)
+```
+Finally, one can make the wordcloud more visually appealing by adding colour as follows:
+
+
+```{r}
+#…add color
+wordcloud(names(freqr),freqr,min.freq=70,colors=brewer.pal(6,'Dark2'))
+```
+
