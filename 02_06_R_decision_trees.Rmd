@@ -1,0 +1,385 @@
+---
+title: "Decision trees"
+author: "olga"
+date: "February 19, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Decision Trees in R
+
+```{r}
+#load required libraries – rpart for classification and regression trees
+library(rpart)
+#mlbench for Ionosphere dataset
+library(mlbench)
+#load Ionosphere
+data('Ionosphere')
+```
+
+Next we separate the data into training and test sets. We will use the former to build the model and the latter to test it. To do this, I use a simple scheme wherein I randomly select 80% of the data for the training set and assign the remainder to the test data set. This is easily done in a single R statement that invokes the uniform distribution (runif) and the vectorised function, ifelse. Before invoking runif, I set a seed integer to my favourite integer in order to ensure reproducibility of results.
+
+
+```{r}
+#set seed to ensure reproducible results
+set.seed(39)
+#split into training and test sets 80%
+Ionosphere[,'train'] <- ifelse(runif(nrow(Ionosphere))<0.8,1,0)
+#separate training and test sets
+trainset <- Ionosphere[Ionosphere$train==1,]
+testset <- Ionosphere[Ionosphere$train==0,]
+
+#get column index of train flag
+trainColNum <- grep('train',names(trainset))
+#remove train flag column from train and test sets
+trainset <- trainset[,-trainColNum]
+testset <- testset[,-trainColNum]
+
+```
+
+```{r}
+head(trainColNum,3)
+```
+
+
+```{r}
+head(Ionosphere,3)
+```
+
+
+```{r}
+head(trainset,3)
+```
+
+Next I invoke rpart.
+Note that we need to remove the predicted variable from the dataset before passing the latter on to the algorithm, which is why we need to find the column index of the  predicted variable (first line below). Also note that we set the method parameter to 'class' which simply tells the algorithm that the predicted variable is discrete.  Finally, rpart uses Gini rule for splitting by default, and we will stick with this option.
+
+```{r}
+#get column index of predicted variable in dataset
+typeColNum <- grep('Class',names(Ionosphere))
+#build model method='class' for classification
+rpart_model <- rpart(Class~.,data = trainset, method='class')
+#plot decision tree
+plot(rpart_model);text(rpart_model)
+```
+The resulting plot is quite self-explanatory .
+Next we see how good the model is by seeing how it fares against the test data.
+```{r}
+#…and the moment of reckoning
+#predict  - function  predict(object, model, filename="", fun=predict, ext=NULL, 
+  # const=NULL, index=1, na.rm=TRUE, inf.rm=FALSE, factors=NULL, 
+#   format, datatype, overwrite=FALSE, progress='', ...)
+rpart_predict <- predict(rpart_model,testset[,-typeColNum],type='class')
+mean(rpart_predict==testset$Class)
+```
+
+```{r}
+#confusion matrix
+table(pred=rpart_predict,true=testset$Class)
+```
+Note that we need to verify the above results by doing multiple runs, each using different training and test sets.Will do it latter.
+
+Prunning:
+Next, we prune the tree using the cost complexity criterion. Basically, the intent is to see if a shallower subtree can give us comparable results. If so, we will be better of choosing the shallower tree because it reduces the likelihood of overfitting.
+
+As described earlier, we choose the appropriate pruning parameter (aka cost-complexity parameter) \alpha by picking the value that results in the lowest prediction error. Note that all relevant computations have already been carried out by R when we built the original tree (the call to rpart in the code above). All that remains now is to pick the value of \alpha:
+
+Functio printcp()
+Displays the cp table for fitted itree object. Note that cp is not defined for method="purity" or "extremes". Otherwise identical to rpart's printcp function.
+```{r}
+#cost-complexity pruning
+printcp(rpart_model)
+```
+
+It is clear from the above, that the lowest cross-validation error (xerror in the table) occurs for \alpha =0.026 (this is CP in the table above).   One can find CP programatically like so:
+
+
+```{r}
+# get index of CP with lowest xerror
+opt <- which.min(rpart_model$cptable[,"xerror"])
+#get its value
+cp <- rpart_model$cptable[opt, "CP"]
+```
+
+```{r}
+cp
+```
+
+
+Next, we prune the tree based on this value of CP:
+
+function prune(tree,cp,...)
+Cost-Complexity Pruning Of An Rpart Object
+Determines a nested sequence of subtrees of the supplied rpart object by recursively snipping off the least important splits, based on the complexity parameter (cp).
+
+cp
+Complexity parameter to which the rpart object will be trimmed.
+```{r}
+#prune tree
+pruned_model <- prune(rpart_model,cp)
+#plot tree
+plot(pruned_model);text(pruned_model)
+```
+
+Note that rpart will use a default CP value of 0.01 if you do not specify one in prune.
+
+COmpare fully grown tree with prunned tree
+```{r}
+#find proportion of correct predictions using test set
+rpart_pruned_predict <- predict(pruned_model,testset[,-typeColNum],type='class')
+mean(rpart_pruned_predict==testset$Class)
+```
+
+This seems like an improvement over the unpruned tree, but one swallow does not a summer make. We need to check that this holds up for different training and test sets. This is easily done by creating multiple random partitions of the dataset and checking the efficiancy of pruning for each. To do this efficiently, I will create a function that takes the training fraction, number of runs (partitions) and the name of the dataset as inputs and outputs the proportion of correct predictions for each run. It also optionally prunes the tree. Here is  the code:
+
+
+```{r}
+#function to do multiple runs
+multiple_runs_classification <- function(train_fraction,n,dataset,prune_tree=FALSE){
+fraction_correct <- rep(NA,n)
+
+
+set.seed(39)
+
+
+for (i in 1:n){
+dataset[,'train'] <- ifelse(runif(nrow(dataset))<0.8,1,0)
+trainColNum <- grep("train",names(dataset))
+typeColNum <- grep("Class",names(dataset))
+trainset <- dataset[dataset$train==1,-trainColNum]
+testset <- dataset[dataset$train==0,-trainColNum]
+rpart_model <- rpart(Class~.,data = trainset, method='class')
+
+
+if(prune_tree==FALSE) {
+rpart_test_predict <- predict(rpart_model,testset[,-typeColNum],type='class')
+fraction_correct[i] <- mean(rpart_test_predict==testset$Class)
+}else{
+opt <- which.min(rpart_model$cptable[,'xerror'])
+cp <- rpart_model$cptable[opt, 'CP']
+pruned_model <- prune(rpart_model,cp)
+rpart_pruned_predict <- predict(pruned_model,testset[,-typeColNum],type='class')
+fraction_correct[i] <- mean(rpart_pruned_predict==testset$Class)
+}
+}
+return(fraction_correct)
+}
+```
+
+
+ I have set the default value of the prune_tree to FALSE, so the function will execute the first branch of the if statement unless the default is overridden.
+
+OK, so let's do 50 runs with and without pruning, and check the mean and variance of the results for both sets of runs.
+
+
+```{r}
+#50 runs, no pruning
+unpruned_set <- multiple_runs_classification(0.8,50,Ionosphere)
+mean(unpruned_set)
+```
+
+```{r}
+#standard deviation
+sd(unpruned_set)
+```
+
+```{r}
+#50 runs, with pruning
+pruned_set <- multiple_runs_classification(0.8,50,Ionosphere,prune_tree=TRUE)
+mean(pruned_set)
+```
+```{r}
+sd(pruned_set)
+```
+
+So we see that there is an improvement of about 2% with pruning. Also, if you were to plot the trees as we did earlier, you would see that this improvement is achieved with shallower trees. Again, I point out that this is not always the case. In fact, it often happens that pruning results in worse predictions, albeit with better reliability a classic illustration of the bias-variance tradeoff.
+
+###########################################################
+
+Regression trees using rpart
+In the previous section we saw how one can build decision trees for situations in which the predicted variable is discrete.  Let's now look at the case in which the predicted variable is continuous. We will use the Boston Housing dataset from the mlbench package.  Much of the discussion of the earlier section applies here, so I will just display the code, explaining only the differences.
+
+Info on dataset is: https://www.rdocumentation.org/packages/mlbench/versions/2.1-1/topics/BostonHousing
+
+```{r}
+#load Boston Housing dataset
+data('BostonHousing')
+#set seed to ensure reproducible results
+set.seed(39)
+#split into training and test sets
+BostonHousing[,'train'] <- ifelse(runif(nrow(BostonHousing))<0.8,1,0)
+#separate training and test sets
+trainset <- BostonHousing[BostonHousing$train==1,]
+testset <- BostonHousing[BostonHousing$train==0,]
+#get column index of train flag
+trainColNum <- grep("train",names(trainset))
+#remove train flag column from train and test sets
+trainset <- trainset[,-trainColNum]
+testset <- testset[,-trainColNum]
+```
+
+quick check
+```{r}
+head(testset,3)
+```
+
+
+Next we invoke rpart, noting that the predicted variable is medv (median value of owner-occupied homes in $1000 units) and that we need to set the method parameter to "ANOVA". The latter tells rpart that the predicted variable is continuous (i.e that this is a regression problem).
+
+```{r}
+#build model
+#method="anova" for regression tree
+rpart_model <- rpart(medv~.,data = trainset, method="anova")
+#plot decision tree
+plot(rpart_model);text(rpart_model)
+resultColNum <- grep('medv', names(trainset))
+```
+
+Next, we need to see how good the predictions are. Since the dependent variable is continuous, we cannot compare the predictions directly against the test set. Instead, we calculate the root mean square (RMS) error. To do this, we request rpart to output the predictions as a vector one prediction per record in the test dataset. The RMS error can then easily be calculated by comparing this vector with the medv column in the test dataset.
+
+Here is the relevant code:
+
+```{r}
+#the moment of reckoning
+rpart_test_predict <- predict(rpart_model,testset[,-resultColNum],type = "vector" )
+#calculate RMS error
+rmsqe <- sqrt(mean((rpart_test_predict-testset$medv)^2))
+rmsqe
+```
+Again, we need to do multiple runs to check on the  reliability of the predictions. However, you already know how to do that so I will leave it to you.
+
+Moving on, we prune the tree using the cost complexity criterion as before.  The code is exactly the same as in the classification problem.
+
+```{r}
+printcp(rpart_model)
+```
+```{r}
+# get index of CP with lowest xerror
+opt <- which.min(rpart_model$cptable[,"xerror"])
+#get its value
+cp <- rpart_model$cptable[opt, "CP"]
+cp
+```
+
+
+```{r}
+#prune tree
+pruned_model <- prune(rpart_model,cp=0.01)
+#plot tree
+plot(pruned_model);text(pruned_model)
+```
+
+```{r}
+library(tree)
+library(MASS)
+library(ggplot2)
+set.seed(39)
+train = sample(1:nrow(Boston),nrow(Boston)/2) # 50/50 split between test and train
+tree.boston = tree (medv ~ ., Boston, subset=train)
+cv.boston = cv.tree(tree.boston)
+plot(cv.boston$size, cv.boston$dev, type='b')
+```
+Results of CP near 7,8,9 are almost identical.The lowest MSE stands at tree size 7 or 8, so even if we prune at 7, it won't make much difference.
+
+The tree is unchanged so I won't show it here. This means, as far as the cost complexity pruning is concerned, the optimal subtree is the same as the original tree. To confirm this, we need to do multiple runs as before  something that I've already left as as an exercise for you :).  Basically, you will need to write a function analogous to the one above, that computes the root mean square error instead of the proportion of correct predictions.
+
+ Decision trees work by splitting a dataset recursively. That is, subsets arising from a split are further split until a predetermined termination criterion is reached.  At each step, a split is made based on the independent variable that results in the largest possible reduction in heterogeneity of the dependent  variable.
+
+
+The main drawback of decision trees is that they are prone to overfitting.   The  reason for this is that trees, if grown deep, are able to fit  all kinds of variations in the data, including noise. Although it is possible to address this partially by pruning, the result often remains less than satisfactory. This is because the algorithm makes a locally optimal choice at each split without any regard to whether the choice made is the best one overall.  A poor split made in the initial stages can thus doom the model, a problem that cannot be fixed by post-hoc pruning.
+
+
+Ok, here is a multiple run regression function
+
+```{r}
+#function to do multiple runs
+multiple_runs_regression <- function(train_fraction,n,dataset,prune_tree=FALSE){
+fraction_correct <- rep(NA,n)
+
+
+set.seed(39)
+
+
+for (i in 1:n){
+dataset[,'train'] <- ifelse(runif(nrow(dataset))<0.8,1,0)
+trainColNum <- grep("train",names(dataset))
+resultColNum <- grep('medv', names(trainset))
+trainset <- dataset[dataset$train==1,-trainColNum]
+testset <- dataset[dataset$train==0,-trainColNum]
+resultColNum <- grep('medv', names(trainset))
+rpart_model <- rpart(medv~.,data = trainset, method='anova')
+
+
+if(prune_tree==FALSE) {
+rpart_test_predict <- predict(rpart_model,testset[,-resultColNum],type='vector')
+fraction_correct[i] <- sqrt(mean((rpart_test_predict-testset$medv)^2))
+}else{
+  
+  
+opt <- which.min(rpart_model$cptable[,'xerror'])
+cp <- rpart_model$cptable[opt, 'CP']
+pruned_model <- prune(rpart_model,cp)
+rpart_pruned_predict <- predict(pruned_model,testset[,-resultColNum],type='vector')
+fraction_correct[i] <-sqrt(mean((rpart_pruned_predict==testset$medv)^2))
+}
+}
+return(fraction_correct)
+}
+```
+
+
+
+```{r}
+unpruned_set <- multiple_runs_regression(0.8,50,BostonHousing)
+unpruned_set
+```
+
+
+```{r}
+#50 runs, no pruning
+unpruned_set <- multiple_runs_regression(0.8,50,BostonHousing)
+mean(unpruned_set)
+```
+
+
+```{r}
+#standard deviation
+sd(unpruned_set)
+```
+
+
+```{r}
+#50 runs, with pruning
+pruned_set <- multiple_runs_regression(0.8,50,BostonHousing,prune_tree=TRUE)
+
+pruned_set
+#mean(pruned_set)
+```
+
+
+```{r}
+sd(pruned_set)
+```
+The cross-validation results suggests that the most complex tree is the best one. We can try pruning this tree to keep 5 terminal nodes.
+
+```{r}
+prune.boston = prune.tree(tree.boston,best=5) # We keep 5 terminal nodes
+plot(prune.boston)
+text(prune.boston, pretty=0)
+```
+Finally, we evaluate the performance of the best tree based on cross-validation - the full tree with 8-terminal nodes
+
+```{r}
+yhat = predict(tree.boston, newdata=Boston[-train,])
+boston.test = Boston[-train,"medv"]
+print(mean((yhat-boston.test)^2))
+```
+
+```{r}
+plot(yhat, boston.test)
+abline(0,1)
+```
+The MSE associated with the tree is 27.24
