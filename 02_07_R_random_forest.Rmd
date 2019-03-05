@@ -1,0 +1,193 @@
+---
+title: "02_07_R_random_forest"
+author: "olga"
+date: "February 27, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction Random forests
+
+
+Decision trees work by splitting a dataset recursively. That is, subsets arising from a split are further split until a predetermined termination criterion is reached.  At each step, a split is made based on the independent variable that results in the largest possible reduction in heterogeneity of the dependent  variable.
+The main drawback of decision trees is that they are prone to overfitting.   The  reason for this is that trees, if grown deep, are able to fit  all kinds of variations in the data, including noise. Although it is possible to address this partially by pruning, the result often remains less than satisfactory. This is because the algorithm makes a locally optimal choice at each split without any regard to whether the choice made is the best one overall.  A poor split made in the initial stages can thus doom the model, a problem that cannot be fixed by post-hoc pruning.
+??andom forests, a tree-based algorithm that addresses the above shortcoming of decision trees.
+
+
+## Random forests
+Taking a cue from the above, it seems reasonable to build many decision trees using:
+
+Different sets of training data.
+Randomly selected subsets of variables at each split of every decision tree.
+Predictions can then made by taking the majority vote over all trees (for classification problems) or averaging results over all trees (for regression problems).  This is essentially how the random forest algorithm works.
+
+The net effect of the two strategies is to reduce overfitting by a) averaging over trees created from different samples of the dataset and b) decreasing the likelihood of a small set of strong predictors dominating the splits.  The price paid is reduced interpretability as well as increased computational complexity. But then, there is no such thing as a free lunch.
+
+
+## Bootstrap aggregating… 
+and a (rather cool) error estimate
+A key feature of the algorithm is the use of multiple datasets for training individual decision trees.  This is done via a neat statistical trick called bootstrap aggregating (also called bagging).
+
+Here’s how bagging works:
+
+Assume you have a dataset of size N.  From this you create a sample (i.e. a subset) of size n (n less than or equal to N) by choosing n data points randomly with replacement.  “Randomly” means every point in the dataset is equally likely to be chosen and   “with replacement” means that a specific data point can appear more than once in the subset. Do this M times to create M equally-sized samples of size n each.  It can be shown that this procedure, which statisticians call bootstrapping, is legit when samples are created from large datasets – that is, when N is large.
+For every data point, obtain predictions for trees in which the point was out of bag. From the result mentioned above, this will yield approximately M/3 predictions per data point (because a third of the data points are out of bag).  Take the majority vote of these M/3 predictions as the predicted value for the data point. One can do this for the entire dataset. From these out of bag predictions for the whole dataset, we can estimate the overall error by computing a classification error (Count of correct predictions divided by N) for classification problems or the root mean squared error for regression problems.  This means there is no need to have a separate test data set, which is kind of cool.  However, if you have enough data, it is worth holding out some data for use as an independent test set. 
+
+## Using subsets of predictor variables
+Although bagging reduces overfitting somewhat, it does not address the issue completely. The reason is that in most datasets a small number of predictors tend to dominate the others.  These predictors tend to be selected in early splits and thus influence the shapes and sizes of a significant fraction of trees in the forest.  That is, strong predictors enhance correlations between trees which tends to come in the way of variance reduction.
+
+A simple way to get around this problem is to use a random subset of variables at each split. This avoids over-representation of dominant variables and thus creates a more diverse forest. This is precisely what the random forest algorithm does.
+
+```{r}
+#load required libraries – rpart for classification and regression trees
+library(rpart)
+#mlbench for Glass dataset
+library(mlbench)
+#load Glass
+data('Glass')
+#set seed to ensure reproducible results
+set.seed(42)
+```
+I use the famous Glass dataset from the mlbench library.  The dataset has 214 data points of six types of glass  with varying metal oxide content and refractive indexes.
+
+##Train test split
+
+```{r}
+#split into training and test sets
+Glass[,'train'] <- ifelse(runif(nrow(Glass))<0.8,1,0)
+
+#separate training and test sets
+trainGlass <- Glass[Glass$train==1,]
+testGlass <- Glass[Glass$train==0,]
+
+#get column index of train flag
+trainColNum <- grep('train',names(trainGlass))
+
+#remove train flag column from train and test sets
+trainGlass <- trainGlass[,-trainColNum]
+testGlass <- testGlass[,-trainColNum]
+
+#get column index of predicted variable in dataset
+typeColNum <- grep('Type',names(Glass))
+```
+
+
+## Building a model decision tree algorithm
+```{r}
+#build model
+rpart_model <- rpart(Type ~.,data = trainGlass, method='class')
+
+#plot tree
+plot(rpart_model);text(rpart_model)
+
+
+```
+
+```{r}
+#…and the moment of reckoning
+rpart_predict <- predict(rpart_model,testGlass[,-typeColNum],type='class')
+
+mean(rpart_predict==testGlass$Type)
+```
+```{r}
+sd(rpart_predict==testGlass$Type)
+```
+
+
+Now, we know that decision tree algorithms tend to display high variance so the hit rate from any one tree is likely to be misleading. To address this we’ll generate a bunch of trees using different training sets (via random sampling) and calculate an average hit rate and spread (or standard deviation).
+```{r}
+#function to do multiple runs
+multiple_runs <- function(train_fraction,n,dataset){
+fraction_correct <- rep(NA,n)
+
+set.seed(42)
+
+for (i in 1:n){
+dataset[,'train'] <- ifelse(runif(nrow(dataset))<0.8,1,0)
+trainColNum <- grep('train',names(dataset))
+typeColNum <- grep('Type',names(dataset))
+trainset <- dataset[dataset$train==1,-trainColNum]
+testset <- dataset[dataset$train==0,-trainColNum]
+rpart_model <- rpart(Type~.,data = trainset, method='class')
+rpart_test_predict <- predict(rpart_model,testset[,-typeColNum],type='class')
+
+fraction_correct[i] <- mean(rpart_test_predict==testset$Type)
+}
+return(fraction_correct)
+}
+
+#50 runs, no pruning
+n_runs <- multiple_runs(0.8,50,Glass)
+mean(n_runs)
+```
+
+Standard deviation
+```{r}
+sd(n_runs)
+```
+
+
+The decision tree algorithm gets it right about 69% of the time with a variation of about 5%. The variation isn’t too bad here, but the accuracy has hardly improved at all (Exercise for the reader: why?). Let’s see if we can do better using random forests.
+
+## Random forests
+
+a random forest algorithm works by averaging over multiple trees using bootstrapped samples. Also, it reduces the correlation between trees by splitting on a random subset of predictors at each node in tree construction. The key parameters for randomForest algorithm are the number of trees (ntree) and the number of variables to be considered for splitting (mtry).  The algorithm sets a default of 500 for ntree and sets mtry to the  square root of the the number of predictors for classification problems or one-third the total number of predictors for regression.   These defaults can be overridden by explicitly providing values for these variables.
+
+The preliminary stuff – the creation of training and test datasets etc. – is much the same as for decision trees but I’ll list the code for completeness.
+
+
+```{r}
+#load required library – randomForest
+library(randomForest)
+#mlbench for Glass dataset – load if not already loaded
+#library(mlbench)
+#load Glass
+data('Glass')
+#set seed to ensure reproducible results
+set.seed(42)
+#split into training and test sets
+Glass[,'train'] <- ifelse(runif(nrow(Glass))<0.8,1,0)
+#separate training and test sets
+trainGlass <- Glass[Glass$train==1,]
+testGlass <- Glass[Glass$train==0,]
+#get column index of train flag
+trainColNum <- grep('train',names(trainGlass))
+#remove train flag column from train and test sets
+trainGlass <- trainGlass[,-trainColNum]
+testGlass <- testGlass[,-trainColNum]
+#get column index of predicted variable in dataset
+typeColNum <- grep('Type',names(Glass))
+```
+
+##Build Random Forest Model
+```{r}
+#build model
+Glass.rf <- randomForest(Type ~.,data = trainGlass, importance=TRUE, xtest=testGlass[,-typeColNum],ntree=1000)
+#Get summary info
+Glass.rf
+```
+The first thing to note is the out of bag error estimate is ~ 22%.  Equivalently the hit rate is 76%, which is better than the 78% for decision trees.
+Secondly, you’ll note that the algorithm does a terrible job identifying type 3  and 6 glasses correctly. This could possibly be improved by a technique called <b>boosting</b>, which works by  iteratively improving poor predictions made in earlier stages. Bootstrapping using gbm package in R.
+
+Finally, for completeness, let’s see how the test set does:
+```{r}
+#accuracy for test set
+mean(Glass.rf$test$predicted==testGlass$Type)
+
+```
+```{r}
+#confusion matrix
+table(Glass.rf$test$predicted,testGlass$Type)
+```
+
+
+
+```{r}
+sd(Glass.rf$test$predicted==testGlass$Type)
+```
+The test accuracy is better than the out of bag accuracy and there are some differences in the class errors as well. However, overall the two compare quite well and are significantly better than the results of the decision tree algorithm.
+
+

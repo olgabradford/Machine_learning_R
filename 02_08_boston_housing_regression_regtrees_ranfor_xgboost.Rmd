@@ -1,0 +1,314 @@
+---
+title: "Boston housing dataset regression"
+author: "olga"
+date: "February 28, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Desicion Trees for Regression on Boston housing dataset
+1. decision trees for regression
+2. bagging (bootsrapping)
+3. random forest for regression
+4. boosting
+5. xgboost
+
+
+# Regression Trees
+
+Load Boston dataset, and fit a tree
+
+```{r}
+library(tree)
+library(MASS)
+library(ggplot2)
+set.seed(42)
+train = sample(1:nrow(Boston),nrow(Boston)/2) # 50/50 split between test and train
+tree.boston = tree (medv ~ ., Boston, subset=train)
+summary(tree.boston)
+```
+
+Picture a tree
+```{r}
+plot(tree.boston)
+text(tree.boston, pretty=0)
+```
+```{r}
+head(Boston)
+```
+
+
+Prune tree using cross-validation with the cv.tree() function
+```{r}
+cv.boston = cv.tree(tree.boston)
+plot(cv.boston$size, cv.boston$dev, type='b')
+```
+```{r}
+#same graph, but with ggplot
+ggplot(mapping = aes(x=cv.boston$size, y=cv.boston$dev)) + geom_line()
+```
+Prunning based on the graph, to keep 5 terminal nodes
+```{r}
+prune.boston = prune.tree(tree.boston,best=5) # We keep 5 terminal nodes
+plot(prune.boston)
+text(prune.boston, pretty=0)
+```
+
+Finaly, evaluate performance of best tree based on cross validtion
+the full tree with 8 terminal nodes
+```{r}
+yhat = predict(tree.boston, newdata=Boston[-train,])
+boston.test = Boston[-train,"medv"]
+print(mean((yhat-boston.test)^2))
+```
+
+```{r}
+plot(yhat, boston.test)
+abline(0,1)
+```
+
+MSE (averaged of the squared error) associated with the tree is 24.84
+
+
+## Bagging  Randon Forest
+In bagging, we use bootstrapping to generate B separate training sets and train a tree on each of them. The predictions are then averaged. For each training set, the data not selected is known as the out-of-bag sample, and is used to evaluate the prediction. 
+
+We now apply baggin to the Boston housing dataset. Since random forest is a special case of bagging (with m=sqrt(p)), we use the randomForest package and set the number of variables mtry to all the drivers in the Boston data set.
+```{r}
+library(randomForest)
+set.seed(42)
+bag.boston = randomForest(medv ~., data=Boston, subset=train, mtry=ncol(Boston)-1, importance=TRUE) 
+bag.boston
+```
+This spawns 500 trees. Let’s evaluate the prediction of the bagged model on the test set
+```{r}
+yhat.bag = predict(bag.boston, newdata=Boston[-train,])
+plot(yhat.bag,boston.test)
+abline(0,1)
+```
+
+
+Lets calculate an error
+```{r}
+round(mean((yhat.bag-boston.test)^2),2)
+```
+Error (17.63 for Random Forest) is much smaller than Tree error(24.84)
+Will limit number of trees to 25 and check error again:
+```{r}
+bag.boston = randomForest(medv ~., data=Boston,subset=train, mtry = ncol(Boston)-1, ntree=25)
+yhat.bag = predict(bag.boston, newdata=Boston[-train,])
+mean((yhat.bag-boston.test)^2)
+```
+Reducing a tree 20 times results in small reduction of  performance.
+
+## Random Forests
+
+Random forests is similar to bagging, except for each tree, a subset m=vp of the total number of predictors are used. This helps de-correlate the trees. Like bagging, random forest will not overfit if the number of trees B is very large. In practice, we use a value of B sufficiently large for the error rate to have settled down.
+
+We now apply random forests to the Boston dataset. By default randomForest() uses p/3 variables when building a regression tree, and sqrt(p) variables when building a classification tree. Since we have 13 variables, we try with mtry=6
+
+```{r}
+rf.boston = randomForest(medv ~., data=Boston, mtry=6, subset=train, importance=TRUE)
+yhat.rf = predict(rf.boston, newdata=Boston[-train, ])
+round(mean((yhat.rf - boston.test)^2),2)
+```
+The error went further down to 17.06.
+The variable importance is given by
+```{r}
+importance(rf.boston)
+```
+
+The two metrics are the increase in MSE and increase in node purity by including the variable. Node impurity is measured by training RSS for regression trees, and deviance for classification trees.
+
+A plot of the variable importance is given by
+
+
+
+```{r}
+varImpPlot(rf.boston)
+```
+
+## Boosting  (package gbm)
+
+In boosting, the trees are trained sequentially based on the reside of the previous step. The steps are as follows
+1. Train a tree \hat{f}^1(x)  on the entire dataset
+2. Update the residual r <- y-\lambda\hat{f}^1(x)
+3. For each tree b=2..B, train the tree on the data (X,r) to get 
+\hat{f}^b(x) and update the residual as r <- y-\lambda\hat{f}^b(x)
+4. The final boosted model is given by \hat{f}(x) = \sum_{i=1}^B{\lambda}\hat{f}^b(x)
+Unlike random forests and bagging, boosting can overfit if the number of trees (B) is very large. An appropriate choice of B can be made using cross-validation. The shrinkage parameter ?? (lambda) controls the rate at which boosting learns and is typically between 0.01 and 0.001. The smaller value implies a slow learning rate. The number of splits d controls the tree complexity. Often d=1 works well.
+
+We now apply boosting to the Boston dataset
+
+```{r}
+library(gbm)
+set.seed(42)
+boost.boston = gbm(medv ~., data=Boston[train,],distribution = "gaussian",n.trees=5000, interaction.depth = 4) # use `distribution='bernoulli' for classification
+summary(boost.boston)
+```
+
+We can produce partial dependence plots for the two important variables lstat and  rm
+```{r}
+par(mfrow=c(1,2))
+plot(boost.boston, i="rm")
+plot(boost.boston, i="lstat")
+```
+Next, we use the boosted model for prediction
+
+```{r}
+yhat.boost = predict(boost.boston, newdata=Boston[-train,],n.trees=5000)
+round(mean((yhat.boost-boston.test)^2),2)
+```
+The above MSE 15.75 is smaller to whatr we've seen in randon forest, and better than bagging. We can further tune the shrinkage parameter, currently set at the default of 0.001
+
+
+```{r}
+boston.boost <- gbm(medv~., data = Boston[train,], distribution = "gaussian", n.trees=5000, interaction.depth=4, shrinkage = 0.1, verbose=F)
+yhat.boost <- predict(boston.boost, Boston[-train,], n.trees=5000)
+round(mean((yhat.boost-boston.test)^2),2)
+```
+with shrinkage increased from 0.001 to 0.1 we can see an improvement in MSE.
+So, will try cross-validation to find the best numbers
+
+```{r}
+#cross-validation
+boston.boost.cv <- gbm(medv~., data = Boston[train,], distribution = "gaussian", n.trees=5000, interaction.depth=4, shrinkage = 0.1, verbose=F, cv.folds=10)
+
+#find the best prediction
+bestTreeForPrediction <- gbm.perf(boston.boost.cv)
+```
+We now predict using this tree
+```{r}
+yhat.boost = predict(boston.boost.cv, newdata = Boston[-train,],n.trees = bestTreeForPrediction)
+round(mean((yhat.boost-boston.test)^2),2)
+```
+
+
+```{r}
+outputdataset = data.frame("crim" = Boston$crim,
+                           "price" = yhat.boost)
+```
+
+```{r}
+head(outputdataset)
+```
+```{r}
+write.csv(outputdataset, "predictions_boost.csv", row.names=FALSE)
+```
+
+```{r}
+write.csv(Boston, "boston_test.csv", row.names=FALSE)
+```
+
+
+
+
+## XGBoost
+XGBoost, or eXtreme Gradient Boosting, implements gradient boosting, but now includes a regularization parameter and implements parallel processing. It also has a built-in routine to handle missing values. XGBoost also allows one to use the model trained on the last iteration, and updates it when new data becomes available.
+
+We now try xgboost on the above dataset
+
+```{r}
+library(xgboost)
+train.boston <- Boston[train,]
+test.boston <- Boston[-train,]
+
+dtrain <- xgb.DMatrix(data = as.matrix(train.boston[!names(train.boston) %in% c("medv")]), label = train.boston$medv)
+
+boston.xgb = xgboost(data=dtrain, max_depth=3, eta = 0.2, nthread=3, nrounds=40, lambda=0
+, objective="reg:linear")
+```
+
+```{r}
+dtest <- as.matrix(test.boston[!names(train.boston) %in% c("medv")])
+yhat.xgb <- predict(boston.xgb,dtest)
+round(mean((yhat.xgb - boston.test)^2),2)
+```
+This showes better result than all other algorithms!
+The number of rounds was based on my iteratively trying out different values for nround.
+Ccross validation functionality within xgboost.
+For convenience, we will move the parameters into its own list
+```{r}
+#xgboost(data=dtrain, max_depth=3, eta = 0.2, nthread=3, nrounds=40, lambda=0, objective="reg:linear")
+set.seed(42)
+param <- list("max_depth" = 3, "eta" = 0.2, "objective" = "reg:linear", "lambda" = 0)
+cv.nround <- 500
+cv.nfold <- 3
+boston.xgb.cv <- xgb.cv(param=param, data = dtrain, nfold = cv.nfold, nrounds=cv.nround,
+                        early_stopping_rounds = 200, # training will stop if performance doesn't improve for 200 rounds from the last best iteration
+                        verbose=0)
+```
+
+```{r}
+dtrain <- xgb.DMatrix(data = as.matrix(train.boston[!names(train.boston) %in% c("medv")]), label = train.boston$medv)
+boston.xgb = xgboost(param=param, data=dtrain, nthread=3, nrounds=boston.xgb.cv$best_iteration, verbose=0)
+```
+
+```{r}
+dtest <- as.matrix(test.boston[!names(train.boston) %in% c("medv")])
+yhat.xgb <- predict(boston.xgb,dtest)
+round(mean((yhat.xgb - boston.test)^2),2)
+```
+Explore feature importance:
+```{r}
+importance <- xgb.importance(colnames(train.boston[!names(train.boston) %in% c("medv")]),model=boston.xgb)
+importance
+```
+```{r}
+xgb.plot.importance(importance, rel_to_first=TRUE, xlab="Relative Importance")
+```
+Tuning parameters in param with caret. (caret - package)
+
+```{r}
+library(caret)
+
+ntrees <- boston.xgb.cv$best_iteration
+param_grid <- expand.grid(
+  nrounds = ntrees,
+  eta = seq(2,24,2)/ntrees,
+  #eta = c(0.1, 0.2, 0.3, 0.4, 0.5),
+  subsample = 1.0,
+  colsample_bytree = 1.0,
+  max_depth = c(1,2,3,4,5,6),
+  gamma = 1,
+  min_child_weight = 1
+)
+
+xgb_control <- trainControl(
+  method="cv",
+  number = 5
+)
+set.seed(42)
+boston.xgb.tuned <- train(medv~., data=train.boston, trControl=xgb_control, tuneGrid=param_grid,lambda=0, method="xgbTree")
+```
+```{r}
+boston.xgb.tuned$bestTune
+```
+
+The best tuning parameters and the final model is above:
+```{r}
+#yhat.xgb.tuned <- predict()
+plot(boston.xgb.tuned)
+```
+Shrinkage
+
+The parameter grid with the RMSE values are in boston.xgb.tuned$results.
+
+We will now use the tuned final model boston.xgb.tuned$finalModel to predict on the test set
+
+```{r}
+yhat.xgb.tuned <- predict(boston.xgb.tuned$finalModel,newdata=dtest)
+round(mean((yhat.xgb.tuned - boston.test)^2),2)
+```
+The best result so far!
+
+```{r}
+outputdataset = data.frame("crim" = Boston$crim,
+                           "price" = yhat.boost)
+write.csv(outputdataset, "predictions_boost.csv", row.names=FALSE)
+
+```
+
